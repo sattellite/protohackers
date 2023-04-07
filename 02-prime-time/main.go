@@ -37,6 +37,11 @@ func main() {
 	}
 }
 
+type request struct {
+	Method *string  `json:"method,omitempty"`
+	Number *float64 `json:"number,omitempty"`
+}
+
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
@@ -46,57 +51,62 @@ func handleConnection(conn net.Conn) {
 
 	data := bufio.NewScanner(conn)
 	for data.Scan() {
-		resp, err := generateResponse(data.Bytes())
+		fmt.Println(addr, "received", len(data.Bytes()), "bytes")
+		req, err := parseRequest(data.Bytes())
 		if err != nil {
-			fmt.Println(err)
-			conn.Close()
+			fmt.Println(addr, err)
+			err := conn.Close()
+			if err != nil {
+				fmt.Println(addr, "error closing connection", err)
+			}
 			break
 		}
-		fmt.Println(string(resp))
-		conn.Write(resp)
-	}
-}
 
-type in struct {
-	Method *string  `json:"method,omitempty"`
-	Number *float64 `json:"number,omitempty"`
+		resp := generateResponse(&req)
+		_, err = conn.Write(resp)
+		if err != nil {
+			fmt.Println(addr, "error writing response", err)
+			err := conn.Close()
+			if err != nil {
+				fmt.Println(addr, "error closing connection", err)
+			}
+			break
+		}
+	}
 }
 
 var t = []byte("{\"method\":\"isPrime\",\"prime\":true}\n")
 var f = []byte("{\"method\":\"isPrime\",\"prime\":false}\n")
 
-var wrong = []byte("malformed request\n")
-
-func generateResponse(data []byte) ([]byte, error) {
-	var req in
-	if err := json.Unmarshal(data, &req); err != nil {
-		return wrong, err
+func parseRequest(data []byte) (request, error) {
+	var r request
+	if err := json.Unmarshal(data, &r); err != nil {
+		return r, err
 	}
 
-	// check that data is valid: all fields are present and method is "isPrime"
-	if req.Method == nil || req.Number == nil || *req.Method != "isPrime" {
-		return wrong, fmt.Errorf("malformed request")
+	if r.Method == nil {
+		return r, fmt.Errorf("malformed request: method is missing")
+	}
+	if *r.Method != "isPrime" {
+		return r, fmt.Errorf("malformed request: method invalid")
+	}
+	if r.Number == nil {
+		return r, fmt.Errorf("malformed request: number is missing")
 	}
 
-	// if number is zero or negative, return false
-	if *req.Number <= 0 {
-		return f, nil
-	}
+	return r, nil
+}
 
+func generateResponse(req *request) []byte {
 	// if number is float, return false
 	if *req.Number != float64(int(*req.Number)) {
-		return f, nil
+		return f
 	}
 
-	// if number is 1, return false
-	if *req.Number == 1 {
-		return f, nil
-	}
 	// check if number is prime
-	if !big.NewInt(int64(*req.Number)).ProbablyPrime(0) {
-		return f, nil
+	if big.NewInt(int64(*req.Number)).ProbablyPrime(0) {
+		return t
 	}
 
-	fmt.Println("true")
-	return t, nil
+	return f
 }
